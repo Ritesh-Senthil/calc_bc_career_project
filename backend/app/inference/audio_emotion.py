@@ -3,6 +3,7 @@ import logging
 import librosa
 import numpy as np
 import torch
+from huggingface_hub import hf_hub_download
 from transformers import (
     AutoFeatureExtractor,
     AutoModelForAudioClassification,
@@ -20,6 +21,13 @@ from app.config import (
 from app.schemas import EmotionPrediction
 
 logger = logging.getLogger(__name__)
+
+_CLASSIFIER_KEY_REMAP = {
+    "classifier.dense.weight": "projector.weight",
+    "classifier.dense.bias": "projector.bias",
+    "classifier.output.weight": "classifier.weight",
+    "classifier.output.bias": "classifier.bias",
+}
 
 # Fallback model uses 8 labels that need remapping to our 7
 _FALLBACK_LABEL_MAP = {
@@ -79,6 +87,9 @@ class AudioEmotionClassifier:
             model = Wav2Vec2ForSequenceClassification.from_pretrained(
                 FALLBACK_AUDIO_MODEL
             )
+
+            self._fix_fallback_classifier(model)
+
             try:
                 self._model = model.to(self._device)
             except RuntimeError:
@@ -90,6 +101,55 @@ class AudioEmotionClassifier:
             logger.info("Fallback audio model loaded on %s", self._device)
         except Exception as e:
             logger.error("Failed to load fallback audio model: %s", e)
+
+    @staticmethod
+    def _fix_fallback_classifier(model: Wav2Vec2ForSequenceClassification) -> None:
+        """Remap old-format checkpoint keys to current transformers layout.
+
+        The ehcalabres checkpoint stores the classification head as
+        classifier.dense.* / classifier.output.*, but current transformers
+        expects projector.* / classifier.*.  Without remapping, those layers
+        stay randomly initialized and the model predicts near-uniform probs.
+        """
+        try:
+            weights_path = hf_hub_download(
+                FALLBACK_AUDIO_MODEL, "model.safetensors"
+            )
+            from safetensors.torch import load_file
+            raw = load_file(weights_path)
+        except Exception:
+            try:
+                weights_path = hf_hub_download(
+                    FALLBACK_AUDIO_MODEL, "pytorch_model.bin"
+                )
+                raw = torch.load(weights_path, map_location="cpu", weights_only=True)
+            except Exception as e:
+                logger.warning("Could not reload checkpoint for key remapping: %s", e)
+                return
+
+        state = model.state_dict()
+        patched = 0
+        for old_key, new_key in _CLASSIFIER_KEY_REMAP.items():
+            if old_key in raw and new_key in state:
+                if raw[old_key].shape == state[new_key].shape:
+                    state[new_key] = raw[old_key]
+                    patched += 1
+
+        if patched:
+            model.load_state_dict(state)
+            logger.info("Patched %d classifier keys from fallback checkpoint", patched)
+        else:
+            logger.warning("No classifier keys matched for remapping")
+
+    def _get_model_labels(self) -> list[str] | None:
+        """Read label ordering from the model's own config instead of guessing."""
+        try:
+            id2label = self._model.config.id2label
+            if id2label:
+                return [id2label[i] for i in range(len(id2label))]
+        except Exception:
+            pass
+        return None
 
     def predict(self, audio_path: str) -> EmotionPrediction:
         self._ensure_loaded()
@@ -110,7 +170,9 @@ class AudioEmotionClassifier:
 
             if self._using_custom:
                 return self._build_custom_prediction(raw_probs)
-            return self._build_fallback_prediction(raw_probs)
+
+            model_labels = self._get_model_labels()
+            return self._build_fallback_prediction(raw_probs, model_labels)
 
         except Exception as e:
             logger.error("Audio emotion prediction failed: %s", e)
@@ -145,21 +207,42 @@ class AudioEmotionClassifier:
             probabilities=probabilities,
         )
 
-    def _build_fallback_prediction(self, raw_probs: np.ndarray) -> EmotionPrediction:
-        fallback_labels = ["angry", "calm", "disgust", "fearful", "happy", "neutral", "sad", "surprised"]
+    def _build_fallback_prediction(
+        self, raw_probs: np.ndarray, model_labels: list[str] | None = None,
+    ) -> EmotionPrediction:
+        if model_labels is None:
+            model_labels = [
+                "angry", "calm", "disgust", "fearful",
+                "happy", "neutral", "sad", "surprised",
+            ]
+
         raw_map = {
-            fallback_labels[i]: float(raw_probs[i])
-            for i in range(len(fallback_labels))
+            model_labels[i]: float(raw_probs[i])
+            for i in range(min(len(model_labels), len(raw_probs)))
         }
 
-        # "calm" and "neutral" both map to our "neutral" — sum their probabilities
-        probabilities: dict[str, float] = {}
-        for src_label, prob in raw_map.items():
-            target = _FALLBACK_LABEL_MAP[src_label]
-            probabilities[target] = probabilities.get(target, 0.0) + prob
+        logger.info("Audio raw label probs: %s",
+                     {k: f"{v:.3f}" for k, v in raw_map.items()})
 
-        for label in EMOTION_LABELS:
-            probabilities.setdefault(label, 0.0)
+        probabilities: dict[str, float] = {lbl: 0.0 for lbl in EMOTION_LABELS}
+
+        for src_label, prob in raw_map.items():
+            src_lower = src_label.lower()
+            if src_lower not in _FALLBACK_LABEL_MAP:
+                continue
+            target = _FALLBACK_LABEL_MAP[src_lower]
+
+            if src_lower == "calm":
+                # Calm ≠ neutral — redistribute: 40% to neutral, 60% spread
+                # across other emotions proportionally.  Straight summing
+                # gives neutral a ~2x structural advantage.
+                probabilities["neutral"] += prob * 0.4
+                spread = prob * 0.6 / max(len(EMOTION_LABELS) - 1, 1)
+                for lbl in EMOTION_LABELS:
+                    if lbl != "neutral":
+                        probabilities[lbl] += spread
+            else:
+                probabilities[target] = probabilities.get(target, 0.0) + prob
 
         total = sum(probabilities.values())
         if total > 0:

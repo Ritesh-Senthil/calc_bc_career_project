@@ -9,9 +9,7 @@ class EmotionPrediction(BaseModel):
 
 class AnalysisResponse(BaseModel):
     transcript: str
-    text_prediction: EmotionPrediction
-    audio_prediction: EmotionPrediction
-    fusion_prediction: EmotionPrediction
+    prediction: EmotionPrediction
     spoken_response: str
 
 

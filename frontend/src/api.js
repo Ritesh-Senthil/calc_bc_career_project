@@ -1,7 +1,4 @@
-export async function analyzeAudio(audioBlob) {
-  const formData = new FormData();
-  formData.append("file", audioBlob, "recording.webm");
-
+async function postAnalyze(formData) {
   const res = await fetch("/api/analyze", {
     method: "POST",
     body: formData,
@@ -12,13 +9,26 @@ export async function analyzeAudio(audioBlob) {
     try {
       const body = await res.json();
       if (body.detail) message = body.detail;
-    } catch {
-      /* response wasn't JSON */
-    }
+    } catch {}
     throw new Error(message);
   }
 
   return res.json();
+}
+
+export async function analyzeAudio(audioBlob, browserTranscript = "") {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.webm");
+  if (browserTranscript) {
+    formData.append("transcript", browserTranscript);
+  }
+  return postAnalyze(formData);
+}
+
+export async function analyzeText(text) {
+  const formData = new FormData();
+  formData.append("transcript", text);
+  return postAnalyze(formData);
 }
 
 export async function checkHealth() {

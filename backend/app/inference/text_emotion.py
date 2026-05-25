@@ -87,8 +87,16 @@ class TextEmotionClassifier:
         if isinstance(probs, float):
             probs = [probs]
 
+        num_labels = len(EMOTION_LABELS)
+        if len(probs) != num_labels:
+            logger.warning(
+                "Custom model output %d classes, expected %d — falling back",
+                len(probs), num_labels,
+            )
+            return _neutral_prediction(0.3)
+
         probabilities = {
-            EMOTION_LABELS[i]: float(probs[i]) for i in range(len(EMOTION_LABELS))
+            EMOTION_LABELS[i]: float(probs[i]) for i in range(num_labels)
         }
         top_label = max(probabilities, key=probabilities.get)
         return EmotionPrediction(
@@ -115,11 +123,13 @@ class TextEmotionClassifier:
 
     def _predict_fallback(self, text: str) -> EmotionPrediction:
         results = self._pipeline(text)[0]
-        probabilities = {r["label"]: float(r["score"]) for r in results}
+        raw = {r["label"]: float(r["score"]) for r in results}
 
-        for label in EMOTION_LABELS:
-            if label not in probabilities:
-                probabilities[label] = 0.0
+        probabilities = {label: raw.get(label, 0.0) for label in EMOTION_LABELS}
+
+        total = sum(probabilities.values())
+        if total > 0:
+            probabilities = {k: v / total for k, v in probabilities.items()}
 
         top_label = max(probabilities, key=probabilities.get)
         return EmotionPrediction(

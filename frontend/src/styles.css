@@ -222,6 +222,68 @@ body {
   text-align: center;
 }
 
+/* -------- input section -------- */
+.input-section {
+  margin-bottom: 48px;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 28px 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.text-input-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.text-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  padding: 14px 16px;
+  resize: vertical;
+  min-height: 72px;
+  transition: border-color 200ms ease;
+}
+
+.text-input::placeholder {
+  color: var(--text-dim);
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--border-hover);
+}
+
+.text-input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.text-submit {
+  align-self: flex-end;
+}
+
 /* -------- analyzing -------- */
 .analyzing {
   display: flex;
@@ -265,6 +327,10 @@ body {
   gap: 16px;
 }
 
+.predictions-row.text-only {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 /* -------- transcript box -------- */
 .transcript-box {
   background: var(--surface);
@@ -292,6 +358,38 @@ body {
 .transcript-box .text--empty {
   color: var(--text-dim);
   font-style: italic;
+}
+
+/* live transcript */
+.transcript-box.live {
+  border-color: var(--anger);
+  border-style: solid;
+  margin-bottom: 24px;
+  animation: live-glow 2s ease-in-out infinite;
+}
+
+@keyframes live-glow {
+  0%, 100% { border-color: rgba(239, 68, 68, 0.3); }
+  50% { border-color: rgba(239, 68, 68, 0.6); }
+}
+
+.transcript-box.live .label {
+  color: var(--anger);
+}
+
+.cursor-blink {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--text);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 /* -------- prediction panel -------- */
@@ -409,6 +507,29 @@ body {
   line-height: 1.7;
   color: var(--text);
   margin-bottom: 18px;
+}
+
+.response-section .response-text .spoken {
+  color: var(--text);
+}
+
+.response-section .response-text .unspoken {
+  color: var(--text-dim);
+}
+
+.response-section.is-speaking {
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.speaking-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 400;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--joy);
+  margin-left: 10px;
+  animation: pulse 1.4s ease-in-out infinite;
 }
 
 .response-actions {

@@ -10,7 +10,12 @@ function formatTime(seconds) {
 const PREFERRED_MIME = "audio/webm";
 const MAX_DURATION = 30;
 
-export default function Recorder({ onRecordingComplete, disabled }) {
+const SpeechRecognitionAPI =
+  typeof window !== "undefined"
+    ? window.SpeechRecognition || window.webkitSpeechRecognition
+    : null;
+
+export default function Recorder({ onRecordingComplete, onLiveTranscript, disabled }) {
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -19,6 +24,8 @@ export default function Recorder({ onRecordingComplete, disabled }) {
   const streamRef = useRef(null);
   const chunksRef = useRef([]);
   const intervalRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const finalTranscriptRef = useRef("");
 
   const cleanup = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -26,8 +33,15 @@ export default function Recorder({ onRecordingComplete, disabled }) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+    }
     recorderRef.current = null;
     chunksRef.current = [];
+    finalTranscriptRef.current = "";
     setElapsed(0);
     setIsRecording(false);
   }, []);
@@ -38,8 +52,10 @@ export default function Recorder({ onRecordingComplete, disabled }) {
 
   const startRecording = useCallback(async () => {
     setPermissionDenied(false);
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (onLiveTranscript) onLiveTranscript("");
       streamRef.current = stream;
 
       const mimeType = MediaRecorder.isTypeSupported(PREFERRED_MIME)
@@ -64,6 +80,41 @@ export default function Recorder({ onRecordingComplete, disabled }) {
       recorder.start(250);
       setIsRecording(true);
 
+      if (SpeechRecognitionAPI && onLiveTranscript) {
+        const recognition = new SpeechRecognitionAPI();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+        finalTranscriptRef.current = "";
+
+        recognition.onresult = (event) => {
+          let interim = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const text = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalTranscriptRef.current += text;
+            } else {
+              interim += text;
+            }
+          }
+          onLiveTranscript(finalTranscriptRef.current + interim);
+        };
+
+        recognition.onerror = () => {};
+        recognition.onend = () => {
+          if (recorderRef.current?.state === "recording") {
+            try {
+              recognition.start();
+            } catch {}
+          }
+        };
+
+        try {
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch {}
+      }
+
       let sec = 0;
       intervalRef.current = setInterval(() => {
         sec += 1;
@@ -76,9 +127,15 @@ export default function Recorder({ onRecordingComplete, disabled }) {
       setPermissionDenied(true);
       cleanup();
     }
-  }, [onRecordingComplete, cleanup]);
+  }, [onRecordingComplete, onLiveTranscript, cleanup]);
 
   const stopRecording = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+    }
     if (recorderRef.current?.state === "recording") {
       recorderRef.current.stop();
     }
